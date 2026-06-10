@@ -1,0 +1,3 @@
+- [PostFlow Project Context](project-context.md) — completed phases 1-7, tech stack rules, Phase 8 (production hardening) is next.
+- [Phase 7 Architecture](phase7-architecture.md) — publishing engine design decisions and Deno/Node.js split.
+- [Tailwind v4 CSS variables](tailwind-v4-css-vars.md) — @theme inline may not cascade dark mode; fix by setting --color-* explicitly in both :root and .dark, and use bg-[var(--popover)] not bg-popover in popover/dropdown/select components.
