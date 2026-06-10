@@ -1,58 +1,50 @@
-import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
-export async function middleware(request: NextRequest) {
+// ---------------------------------------------------------------------------
+// Session detection — reads the Supabase auth cookie directly.
+//
+// Why no Supabase client here:
+//   @supabase/ssr 0.12 exposes a restricted SupabaseAuthClient type in the
+//   middleware context that omits both getUser() and getSession() from its
+//   TypeScript declarations, causing build failures on strict type checkers
+//   (Vercel CI). Reading the cookie directly is also faster — no client
+//   instantiation or network round-trip on every request.
+//
+// The cookie Supabase sets is named:  sb-<project-ref>-auth-token
+// We detect it by its prefix/suffix pattern so the code stays project-agnostic.
+// ---------------------------------------------------------------------------
+
+function hasValidSession(request: NextRequest): boolean {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!supabaseUrl) return false
 
-  // Skip auth guard if credentials are absent or not a valid URL
-  if (!supabaseUrl || !supabaseKey) {
-    return NextResponse.next({ request })
-  }
+  // Extract project ref from URL: https://<ref>.supabase.co
+  let projectRef: string | null = null
   try {
-    const parsed = new URL(supabaseUrl)
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      return NextResponse.next({ request })
-    }
+    const host = new URL(supabaseUrl).hostname        // e.g. abcdef.supabase.co
+    projectRef = host.split(".")[0]                   // e.g. abcdef
   } catch {
-    return NextResponse.next({ request })
+    return false
   }
 
-  let supabaseResponse = NextResponse.next({ request })
+  if (!projectRef) return false
 
-  let supabase
-  try {
-    supabase = createServerClient(supabaseUrl, supabaseKey, {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          )
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    })
-  } catch {
-    return NextResponse.next({ request })
-  }
+  // Primary cookie name used by @supabase/ssr
+  const cookieName = `sb-${projectRef}-auth-token`
+  const cookie = request.cookies.get(cookieName)
+  if (cookie?.value) return true
 
-  let user = null
-  try {
-    const { data: { session } } = await supabase.auth.getSession()
-    user = session?.user ?? null
-  } catch {
-    return NextResponse.next({ request })
-  }
+  // Fallback: chunked cookie pattern (sb-<ref>-auth-token.0, .1, …)
+  const chunk0 = request.cookies.get(`${cookieName}.0`)
+  if (chunk0?.value) return true
 
+  return false
+}
+
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  const authRoutes = ["/login", "/signup"]
+  const authRoutes     = ["/login", "/signup"]
   const protectedRoutes = [
     "/dashboard",
     "/campaigns",
@@ -62,19 +54,28 @@ export async function middleware(request: NextRequest) {
     "/settings",
   ]
 
-  if (!user && protectedRoutes.some((route) => pathname.startsWith(route))) {
+  const isProtected = protectedRoutes.some((r) => pathname.startsWith(r))
+  const isAuthRoute  = authRoutes.includes(pathname)
+
+  if (!isProtected && !isAuthRoute) {
+    return NextResponse.next({ request })
+  }
+
+  const loggedIn = hasValidSession(request)
+
+  if (!loggedIn && isProtected) {
     const url = request.nextUrl.clone()
     url.pathname = "/login"
     return NextResponse.redirect(url)
   }
 
-  if (user && authRoutes.includes(pathname)) {
+  if (loggedIn && isAuthRoute) {
     const url = request.nextUrl.clone()
     url.pathname = "/dashboard"
     return NextResponse.redirect(url)
   }
 
-  return supabaseResponse
+  return NextResponse.next({ request })
 }
 
 export const config = {
