@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { mockUrls, type Campaign, type CampaignStatus } from "@/lib/mock-data"
+import { BulkUrlUpload } from "@/components/url/bulk-url-upload"
+import { useUrlStore } from "@/lib/url-store"
+import { type Campaign, type CampaignStatus, type UrlEntry } from "@/lib/mock-data"
 import {
   PLATFORM_REGISTRY,
   PLATFORM_LABELS,
@@ -32,6 +34,7 @@ import {
 import {
   Plus,
   X,
+  Upload,
   MoreHorizontal,
   TrendingUp,
   CalendarDays,
@@ -40,6 +43,7 @@ import {
   Link2,
   Zap,
   ChevronRight,
+  ExternalLink,
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -94,19 +98,21 @@ interface FormState {
   description: string
   platforms: string[]
   urlIds: string[]
+  campaignUrls: UrlEntry[]
   frequencyKey: string
   startDate: string
   timezone: string
 }
 
 const EMPTY_FORM: FormState = {
-  name:         "",
-  description:  "",
-  platforms:    [],
-  urlIds:       [],
-  frequencyKey: DEFAULT_FREQUENCY_KEY,
-  startDate:    new Date().toISOString().split("T")[0],
-  timezone:     "UTC",
+  name:          "",
+  description:   "",
+  platforms:     [],
+  urlIds:        [],
+  campaignUrls:  [],
+  frequencyKey:  DEFAULT_FREQUENCY_KEY,
+  startDate:     new Date().toISOString().split("T")[0],
+  timezone:      "UTC",
 }
 
 // ---------------------------------------------------------------------------
@@ -125,15 +131,21 @@ interface ActivationNotice {
 // ---------------------------------------------------------------------------
 
 export default function CampaignsPage() {
+  const { urls: libraryUrls } = useUrlStore()
+
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [showForm, setShowForm]   = useState(false)
   const [form, setForm]           = useState<FormState>(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
   const [notice, setNotice]       = useState<ActivationNotice | null>(null)
+  const [bulkCampaignOpen, setBulkCampaignOpen] = useState(false)
 
   const [search, setSearch]             = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [page, setPage]                 = useState(1)
+
+  // total URLs selected for the form (library picks + campaign-only)
+  const totalUrlCount = form.urlIds.length + form.campaignUrls.length
 
   // ---- Filtering & pagination ----
   const filtered = useMemo(() => {
@@ -151,12 +163,12 @@ export default function CampaignsPage() {
     setSearch(""); setStatusFilter("all"); setPage(1)
   }
 
-  // ---- Schedule preview (computed from form inputs) ----
+  // ---- Schedule preview ----
   const schedulePreview = useMemo(() => {
-    if (!form.startDate || form.platforms.length === 0 || form.urlIds.length === 0) return null
+    if (!form.startDate || form.platforms.length === 0 || totalUrlCount === 0) return null
     const freq = parseFrequencyKey(form.frequencyKey)
-    return previewSchedule(form.urlIds.length, form.platforms.length, new Date(form.startDate + "T00:00:00"), freq)
-  }, [form.urlIds.length, form.platforms.length, form.frequencyKey, form.startDate])
+    return previewSchedule(totalUrlCount, form.platforms.length, new Date(form.startDate + "T00:00:00"), freq)
+  }, [totalUrlCount, form.platforms.length, form.frequencyKey, form.startDate])
 
   // ---- Toggle platform in form ----
   const togglePlatform = useCallback((id: string) => {
@@ -168,7 +180,7 @@ export default function CampaignsPage() {
     }))
   }, [])
 
-  // ---- Toggle URL in form ----
+  // ---- Toggle library URL in form ----
   const toggleUrl = useCallback((id: string) => {
     setForm((f) => ({
       ...f,
@@ -178,8 +190,29 @@ export default function CampaignsPage() {
     }))
   }, [])
 
+  // ---- Add campaign-only URLs ----
+  const addCampaignUrls = useCallback((entries: UrlEntry[]) => {
+    setForm((f) => ({
+      ...f,
+      campaignUrls: [...f.campaignUrls, ...entries],
+    }))
+  }, [])
+
+  // ---- Remove a single campaign-only URL ----
+  const removeCampaignUrl = useCallback((id: string) => {
+    setForm((f) => ({
+      ...f,
+      campaignUrls: f.campaignUrls.filter((u) => u.id !== id),
+    }))
+  }, [])
+
+  // ---- Clear all campaign-only URLs ----
+  const clearCampaignUrls = useCallback(() => {
+    setForm((f) => ({ ...f, campaignUrls: [] }))
+  }, [])
+
   // ---- Submit new campaign ----
-  function handleCreateCampaign() {
+  function handleCreateCampaign(activateAfter = false) {
     if (!form.name.trim()) { setFormError("Campaign name is required."); return }
     if (form.platforms.length === 0) { setFormError("Select at least one platform."); return }
     if (!form.startDate) { setFormError("Start date is required."); return }
@@ -200,9 +233,24 @@ export default function CampaignsPage() {
       successRate:    0,
       frequency:      frequencyLabel(freq),
       timezone:       form.timezone,
-      urlCount:       form.urlIds.length,
+      urlCount:       totalUrlCount,
     }
     setCampaigns((prev) => [newCampaign, ...prev])
+
+    if (activateAfter && schedulePreview) {
+      const preview = schedulePreview
+      setCampaigns((prev) =>
+        prev.map((c) => c.id === newCampaign.id ? { ...c, status: "active" as CampaignStatus } : c)
+      )
+      setNotice({
+        campaignName: newCampaign.name,
+        totalPosts:   preview.totalSlots,
+        firstDate:    preview.firstPublishAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        lastDate:     preview.lastPublishAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      })
+      setTimeout(() => setNotice(null), 6000)
+    }
+
     setForm(EMPTY_FORM)
     setShowForm(false)
   }
@@ -259,9 +307,9 @@ export default function CampaignsPage() {
   }
 
   // ---- Stat counts ----
-  const activeCt   = campaigns.filter((c) => c.status === "active").length
-  const draftCt    = campaigns.filter((c) => c.status === "draft").length
-  const pausedCt   = campaigns.filter((c) => c.status === "paused").length
+  const activeCt  = campaigns.filter((c) => c.status === "active").length
+  const draftCt   = campaigns.filter((c) => c.status === "draft").length
+  const pausedCt  = campaigns.filter((c) => c.status === "paused").length
 
   return (
     <div className="flex flex-col flex-1">
@@ -384,44 +432,123 @@ export default function CampaignsPage() {
               <Separator />
 
               {/* Row 3: URLs */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <Label className="text-xs flex items-center gap-1">
                   <Link2 className="h-3 w-3" />
-                  URLs from URL Library
-                  {form.urlIds.length > 0 && (
-                    <span className="ml-1 text-muted-foreground">({form.urlIds.length} selected)</span>
+                  URLs
+                  {totalUrlCount > 0 && (
+                    <span className="ml-1 text-muted-foreground">({totalUrlCount} total)</span>
                   )}
                 </Label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {mockUrls.map((url) => {
-                    const selected = form.urlIds.includes(url.id)
-                    return (
-                      <button
-                        key={url.id}
-                        type="button"
-                        onClick={() => toggleUrl(url.id)}
-                        className={`flex items-start gap-2 rounded-md border px-3 py-2 text-left text-xs transition-all ${
-                          selected
-                            ? "border-primary/40 bg-primary/5 text-foreground"
-                            : "border-border text-muted-foreground hover:bg-muted/40"
-                        }`}
-                      >
-                        <span className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-sm border flex items-center justify-center ${
-                          selected ? "border-primary bg-primary" : "border-muted-foreground/40"
-                        }`}>
-                          {selected && <span className="text-primary-foreground text-[9px]">✓</span>}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="font-medium text-foreground truncate">{url.title}</p>
-                          <p className="text-muted-foreground truncate">{url.shortUrl}</p>
-                        </div>
-                      </button>
-                    )
-                  })}
+
+                {/* — From library — */}
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
+                    From Library
+                    {form.urlIds.length > 0 && ` · ${form.urlIds.length} selected`}
+                  </p>
+                  {libraryUrls.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic">
+                      No URLs in your library yet. Add them on the{" "}
+                      <a href="/url-library" className="underline text-primary">URL Library</a> page,
+                      or add campaign-only URLs below.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto pr-1">
+                      {libraryUrls.map((url) => {
+                        const selected = form.urlIds.includes(url.id)
+                        return (
+                          <button
+                            key={url.id}
+                            type="button"
+                            onClick={() => toggleUrl(url.id)}
+                            className={`flex items-start gap-2 rounded-md border px-3 py-2 text-left text-xs transition-all ${
+                              selected
+                                ? "border-primary/40 bg-primary/5 text-foreground"
+                                : "border-border text-muted-foreground hover:bg-muted/40"
+                            }`}
+                          >
+                            <span className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-sm border flex items-center justify-center ${
+                              selected ? "border-primary bg-primary" : "border-muted-foreground/40"
+                            }`}>
+                              {selected && <span className="text-primary-foreground text-[9px]">✓</span>}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground truncate">{url.title}</p>
+                              <p className="text-muted-foreground truncate">{url.shortUrl}</p>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
-                <p className="text-[11px] text-muted-foreground">
-                  URLs not listed here can be added via the URL Library page.
-                </p>
+
+                {/* — Campaign-only URLs — */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
+                      Campaign-Only URLs
+                      {form.campaignUrls.length > 0 && ` · ${form.campaignUrls.length}`}
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      {form.campaignUrls.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={clearCampaignUrls}
+                          className="text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+                        >
+                          Clear all
+                        </button>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[11px] px-2 gap-1"
+                        onClick={() => setBulkCampaignOpen(true)}
+                      >
+                        <Upload className="h-3 w-3" />
+                        Bulk Upload
+                      </Button>
+                    </div>
+                  </div>
+
+                  {form.campaignUrls.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic">
+                      These URLs stay private to this campaign and won&apos;t appear in your library.
+                    </p>
+                  ) : (
+                    <div className="space-y-1 max-h-44 overflow-y-auto pr-1">
+                      {form.campaignUrls.map((url) => (
+                        <div
+                          key={url.id}
+                          className="flex items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-foreground truncate">{url.title}</p>
+                            <p className="text-muted-foreground truncate">{url.originalUrl}</p>
+                          </div>
+                          <a
+                            href={url.originalUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => removeCampaignUrl(url.id)}
+                            className="shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <Separator />
@@ -501,7 +628,7 @@ export default function CampaignsPage() {
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total posts</p>
                       <p className="text-sm font-bold">{schedulePreview.totalSlots.toLocaleString()}</p>
                       <p className="text-[10px] text-muted-foreground">
-                        {form.urlIds.length} URLs × {form.platforms.length} platform{form.platforms.length !== 1 ? "s" : ""}
+                        {totalUrlCount} URLs × {form.platforms.length} platform{form.platforms.length !== 1 ? "s" : ""}
                       </p>
                     </div>
                     <div>
@@ -538,16 +665,14 @@ export default function CampaignsPage() {
                 <Button variant="ghost" size="sm" onClick={() => { setShowForm(false); setForm(EMPTY_FORM); setFormError(null) }}>
                   Cancel
                 </Button>
-                <Button size="sm" onClick={handleCreateCampaign}>
+                <Button size="sm" onClick={() => handleCreateCampaign(false)}>
                   Create as Draft
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   className="gap-1.5"
-                  onClick={() => {
-                    handleCreateCampaign()
-                  }}
+                  onClick={() => handleCreateCampaign(true)}
                   disabled={!schedulePreview}
                 >
                   <Zap className="h-3.5 w-3.5" />
@@ -611,6 +736,14 @@ export default function CampaignsPage() {
           />
         )}
       </main>
+
+      {/* ---- Campaign-only bulk upload dialog ---- */}
+      <BulkUrlUpload
+        open={bulkCampaignOpen}
+        onOpenChange={setBulkCampaignOpen}
+        onAdd={addCampaignUrls}
+        mode="campaign"
+      />
     </div>
   )
 }
@@ -647,7 +780,7 @@ function CampaignCard({
               <p className="text-xs text-muted-foreground line-clamp-1">{campaign.description}</p>
             )}
 
-            {/* Meta row: dates + frequency + timezone */}
+            {/* Meta row */}
             <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
               <span className="flex items-center gap-1">
                 <CalendarDays className="h-3 w-3 shrink-0" />
@@ -673,7 +806,7 @@ function CampaignCard({
               )}
             </div>
 
-            {/* Platform badges + stats + progress */}
+            {/* Platform badges + stats */}
             <div className="flex items-center gap-3 flex-wrap">
               <div className="flex gap-1">
                 {campaign.platforms.map((p) => (
@@ -718,7 +851,6 @@ function CampaignCard({
 
           {/* Actions dropdown */}
           <div className="flex items-center gap-1 shrink-0">
-            {/* Quick-action button for most common action */}
             {actions[0] && !actions[0].destructive && (
               <Button
                 size="sm"
@@ -749,7 +881,7 @@ function CampaignCard({
                 {actions.map((a) => (
                   <DropdownMenuItem
                     key={a.action}
-                    className={a.destructive ? "text-destructive" : ""}
+                    className={a.destructive ? "text-destructive focus:text-destructive" : ""}
                     onClick={() => onAction(campaign.id, a.action)}
                   >
                     {a.label}

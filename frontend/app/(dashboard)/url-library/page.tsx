@@ -12,29 +12,46 @@ import { Label } from "@/components/ui/label"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { type UrlEntry } from "@/lib/mock-data"
-import { Plus, Copy, ExternalLink, MoreHorizontal, MousePointerClick, Link2 } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { BulkUrlUpload } from "@/components/url/bulk-url-upload"
+import { useUrlStore } from "@/lib/url-store"
+import { type UrlEntry } from "@/lib/mock-data"
+import {
+  Plus,
+  Upload,
+  Copy,
+  ExternalLink,
+  MoreHorizontal,
+  MousePointerClick,
+  Link2,
+  Trash2,
+} from "lucide-react"
 
-const PAGE_SIZE = 5
+const PAGE_SIZE = 10
 
 const EMPTY_FORM = { title: "", originalUrl: "", tags: "" }
 
 export default function UrlLibraryPage() {
-  const [urls, setUrls] = useState<UrlEntry[]>([])
+  const { urls, addUrls, removeUrl, clearAll } = useUrlStore()
+
   const [search, setSearch] = useState("")
-  const [page, setPage]   = useState(1)
+  const [page, setPage] = useState(1)
   const [copied, setCopied] = useState<string | null>(null)
-  const [dialogOpen, setDialogOpen] = useState(false)
+
+  const [addOpen, setAddOpen] = useState(false)
+  const [bulkOpen, setBulkOpen] = useState(false)
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
+
   const [form, setForm] = useState(EMPTY_FORM)
   const [errors, setErrors] = useState<Partial<typeof EMPTY_FORM>>({})
 
@@ -51,7 +68,7 @@ export default function UrlLibraryPage() {
   }, [urls, search])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   function copyToClipboard(url: string, id: string) {
     navigator.clipboard.writeText(url)
@@ -59,14 +76,10 @@ export default function UrlLibraryPage() {
     setTimeout(() => setCopied(null), 2000)
   }
 
-  function handleDelete(id: string) {
-    setUrls((prev) => prev.filter((u) => u.id !== id))
-  }
-
-  function openDialog() {
+  function openAdd() {
     setForm(EMPTY_FORM)
     setErrors({})
-    setDialogOpen(true)
+    setAddOpen(true)
   }
 
   function validate() {
@@ -83,23 +96,25 @@ export default function UrlLibraryPage() {
     return Object.keys(next).length === 0
   }
 
-  function handleSubmit() {
+  function handleSingleAdd() {
     if (!validate()) return
     const id = crypto.randomUUID()
     const host = new URL(form.originalUrl.trim()).hostname.replace(/^www\./, "")
     const slug = Math.random().toString(36).slice(2, 8)
-    const newEntry: UrlEntry = {
+    const entry: UrlEntry = {
       id,
       title: form.title.trim(),
       originalUrl: form.originalUrl.trim(),
       shortUrl: `https://${host}/s/${slug}`,
       clicks: 0,
       campaigns: [],
-      createdAt: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      createdAt: new Date().toLocaleDateString("en-US", {
+        month: "short", day: "numeric", year: "numeric",
+      }),
       tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
     }
-    setUrls((prev) => [newEntry, ...prev])
-    setDialogOpen(false)
+    addUrls([entry])
+    setAddOpen(false)
   }
 
   return (
@@ -107,16 +122,38 @@ export default function UrlLibraryPage() {
       <Header title="URL Library" />
 
       <main className="flex-1 p-4 lg:p-6 space-y-4">
-        <div className="flex items-center justify-between gap-3">
+
+        {/* ---- Top bar ---- */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <p className="text-sm text-muted-foreground">
-            {urls.length === 0 ? "No URLs yet" : `${filtered.length} URL${filtered.length !== 1 ? "s" : ""}`}
+            {urls.length === 0
+              ? "No URLs yet"
+              : `${urls.length} URL${urls.length !== 1 ? "s" : ""} in library`}
           </p>
-          <Button size="sm" className="gap-1.5" onClick={openDialog}>
-            <Plus className="h-4 w-4" />
-            Add URL
-          </Button>
+          <div className="flex items-center gap-2">
+            {urls.length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10"
+                onClick={() => setClearConfirmOpen(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear All
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setBulkOpen(true)}>
+              <Upload className="h-4 w-4" />
+              Bulk Upload
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={openAdd}>
+              <Plus className="h-4 w-4" />
+              Add URL
+            </Button>
+          </div>
         </div>
 
+        {/* ---- Search ---- */}
         {urls.length > 0 && (
           <SearchFilter
             search={search}
@@ -125,23 +162,30 @@ export default function UrlLibraryPage() {
           />
         )}
 
+        {/* ---- List ---- */}
         <div className="space-y-3">
           {urls.length === 0 ? (
             <Card>
-              <CardContent className="flex flex-col items-center justify-center py-16 text-center gap-3">
+              <CardContent className="flex flex-col items-center justify-center py-16 text-center gap-4">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                   <Link2 className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="text-sm font-medium">No URLs in your library</p>
                   <p className="text-xs text-muted-foreground mt-1 max-w-xs">
-                    Add URLs to shorten and track. Assign them to campaigns to include in scheduled posts.
+                    Add URLs individually or bulk-upload up to 100 at once. Assign them to campaigns to include in scheduled posts.
                   </p>
                 </div>
-                <Button size="sm" className="gap-1.5 mt-1" onClick={openDialog}>
-                  <Plus className="h-4 w-4" />
-                  Add your first URL
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setBulkOpen(true)}>
+                    <Upload className="h-4 w-4" />
+                    Bulk Upload
+                  </Button>
+                  <Button size="sm" className="gap-1.5" onClick={openAdd}>
+                    <Plus className="h-4 w-4" />
+                    Add URL
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ) : paginated.length === 0 ? (
@@ -223,9 +267,9 @@ export default function UrlLibraryPage() {
                           <DropdownMenuItem>View analytics</DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
-                            onClick={() => handleDelete(url.id)}
+                            onClick={() => removeUrl(url.id)}
                           >
-                            Delete
+                            Remove
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -248,12 +292,13 @@ export default function UrlLibraryPage() {
         )}
       </main>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      {/* ---- Add single URL dialog ---- */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Add URL</DialogTitle>
+            <DialogDescription>Add a single URL to your library.</DialogDescription>
           </DialogHeader>
-
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label htmlFor="url-title">Title</Label>
@@ -265,7 +310,6 @@ export default function UrlLibraryPage() {
               />
               {errors.title && <p className="text-xs text-destructive">{errors.title}</p>}
             </div>
-
             <div className="space-y-1.5">
               <Label htmlFor="url-original">URL</Label>
               <Input
@@ -276,10 +320,10 @@ export default function UrlLibraryPage() {
               />
               {errors.originalUrl && <p className="text-xs text-destructive">{errors.originalUrl}</p>}
             </div>
-
             <div className="space-y-1.5">
               <Label htmlFor="url-tags">
-                Tags <span className="text-muted-foreground font-normal">(optional, comma-separated)</span>
+                Tags{" "}
+                <span className="text-muted-foreground font-normal text-xs">(optional, comma-separated)</span>
               </Label>
               <Input
                 id="url-tags"
@@ -289,10 +333,39 @@ export default function UrlLibraryPage() {
               />
             </div>
           </div>
-
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmit}>Add URL</Button>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
+            <Button onClick={handleSingleAdd}>Add URL</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ---- Bulk upload dialog ---- */}
+      <BulkUrlUpload
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        onAdd={(entries) => { addUrls(entries); setPage(1) }}
+        mode="library"
+      />
+
+      {/* ---- Clear all confirm dialog ---- */}
+      <Dialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Clear all URLs?</DialogTitle>
+            <DialogDescription>This action cannot be undone.</DialogDescription>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground py-1">
+            This will remove all {urls.length} URL{urls.length !== 1 ? "s" : ""} from your library. This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClearConfirmOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => { clearAll(); setClearConfirmOpen(false); setSearch(""); setPage(1) }}
+            >
+              Clear All
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
