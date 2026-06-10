@@ -49,12 +49,12 @@ BEGIN
   ]
   LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_set_updated_at ON public.%I', tbl, tbl);
-    EXECUTE format($$
+    EXECUTE format($trig$
       CREATE TRIGGER trg_%s_set_updated_at
         BEFORE UPDATE ON public.%I
         FOR EACH ROW
         EXECUTE FUNCTION public.set_updated_at();
-    $$, tbl, tbl);
+    $trig$, tbl, tbl);
   END LOOP;
 END;
 $$;
@@ -129,13 +129,13 @@ BEGIN
   ]
   LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%s_no_update_after_delete ON public.%I', tbl, tbl);
-    EXECUTE format($$
+    EXECUTE format($trig$
       CREATE TRIGGER trg_%s_no_update_after_delete
         BEFORE UPDATE ON public.%I
         FOR EACH ROW
         WHEN (OLD.deleted_at IS NOT NULL)
         EXECUTE FUNCTION public.prevent_update_after_soft_delete();
-    $$, tbl, tbl);
+    $trig$, tbl, tbl);
   END LOOP;
 END;
 $$;
