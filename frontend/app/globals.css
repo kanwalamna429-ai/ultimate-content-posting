@@ -138,3 +138,38 @@ body {
   color: var(--foreground);
   -webkit-font-smoothing: antialiased;
 }
+
+/* ------------------------------------------------------------------ */
+/* Radix UI portal backgrounds                                          */
+/* Tailwind v4 + Turbopack does not reliably scan/emit bg-[var(--*)]   */
+/* for portal-rendered elements. These rules live in plain CSS and     */
+/* are guaranteed to apply regardless of Tailwind class generation.    */
+/* ------------------------------------------------------------------ */
+
+/* Dropdown menu */
+[role="menu"] {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border-color: var(--border) !important;
+}
+
+/* Select listbox */
+[role="listbox"] {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border-color: var(--border) !important;
+}
+
+/* Radix popper wrapper — covers all floating content */
+[data-radix-popper-content-wrapper] > * {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border-color: var(--border) !important;
+}
+
+/* Dialog / modal content */
+[role="dialog"] {
+  background-color: var(--popover) !important;
+  color: var(--popover-foreground) !important;
+  border-color: var(--border) !important;
+}
