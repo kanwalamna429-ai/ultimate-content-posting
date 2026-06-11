@@ -42,11 +42,12 @@ const PAGE_SIZE = 10
 const EMPTY_FORM = { title: "", originalUrl: "", tags: "" }
 
 export default function UrlLibraryPage() {
-  const { urls, addUrls, removeUrl, clearAll } = useUrlStore()
+  const { urls, loading, addUrls, removeUrl, clearAll } = useUrlStore()
 
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
   const [copied, setCopied] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const [addOpen, setAddOpen] = useState(false)
   const [bulkOpen, setBulkOpen] = useState(false)
@@ -96,16 +97,15 @@ export default function UrlLibraryPage() {
     return Object.keys(next).length === 0
   }
 
-  function handleSingleAdd() {
+  async function handleSingleAdd() {
     if (!validate()) return
+    setSaving(true)
     const id = crypto.randomUUID()
-    const host = new URL(form.originalUrl.trim()).hostname.replace(/^www\./, "")
-    const slug = Math.random().toString(36).slice(2, 8)
     const entry: UrlEntry = {
       id,
       title: form.title.trim(),
       originalUrl: form.originalUrl.trim(),
-      shortUrl: `https://${host}/s/${slug}`,
+      shortUrl: form.originalUrl.trim(),
       clicks: 0,
       campaigns: [],
       createdAt: new Date().toLocaleDateString("en-US", {
@@ -113,7 +113,8 @@ export default function UrlLibraryPage() {
       }),
       tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
     }
-    addUrls([entry])
+    await addUrls([entry])
+    setSaving(false)
     setAddOpen(false)
   }
 
@@ -164,7 +165,22 @@ export default function UrlLibraryPage() {
 
         {/* ---- List ---- */}
         <div className="space-y-3">
-          {urls.length === 0 ? (
+          {loading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <Card key={i}>
+                <CardContent className="p-4 lg:p-5">
+                  <div className="flex items-start justify-between gap-4 animate-pulse">
+                    <div className="flex-1 space-y-2">
+                      <div className="h-4 w-48 rounded bg-muted" />
+                      <div className="h-3 w-64 rounded bg-muted" />
+                      <div className="h-3 w-32 rounded bg-muted" />
+                    </div>
+                    <div className="h-8 w-16 rounded bg-muted shrink-0" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          ) : urls.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16 text-center gap-4">
                 <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
@@ -344,7 +360,7 @@ export default function UrlLibraryPage() {
       <BulkUrlUpload
         open={bulkOpen}
         onOpenChange={setBulkOpen}
-        onAdd={(entries) => { addUrls(entries); setPage(1) }}
+        onAdd={async (entries) => { await addUrls(entries); setPage(1) }}
         mode="library"
       />
 
@@ -362,7 +378,7 @@ export default function UrlLibraryPage() {
             <Button variant="outline" onClick={() => setClearConfirmOpen(false)}>Cancel</Button>
             <Button
               variant="destructive"
-              onClick={() => { clearAll(); setClearConfirmOpen(false); setSearch(""); setPage(1) }}
+              onClick={async () => { await clearAll(); setClearConfirmOpen(false); setSearch(""); setPage(1) }}
             >
               Clear All
             </Button>
